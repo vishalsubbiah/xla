@@ -18,7 +18,7 @@ To build:
 * Clone the _PyTorch/XLA_ repo:
 
   ```
-  git clone --recursive https://github.com/pytorch/xla.git
+  git clone --recursive https://github.com/vishalsubbiah/xla.git
   ```
 
 * Apply the `pytorch.patch` to the current `xla` code. From within the _pytorch_ source folder:
