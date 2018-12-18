@@ -26,6 +26,16 @@ namespace torch {
 namespace jit {
 namespace {
 
+void gen_xla(const xla::XlaComputation& computation,std::string fname){
+  std::cout<<"gen_xla start\n";
+  auto proto = computation.proto();
+  std::ofstream myfile;
+  myfile.open (fname);
+  myfile << proto.DebugString();
+  myfile.close();
+  std::cout<<"xla generated\n";
+  exit(0);
+}
 void GatherParameters(std::vector<at::Tensor*>* values,
                       std::vector<bool>* requires_grad,
                       const script::Module& m) {
@@ -60,10 +70,12 @@ XlaModule::TensorBatchVector CreateResultBatchVector(
 }  // namespace
 
 XlaModule::XlaModule(const std::shared_ptr<script::Module> module,
-                     bool use_full_conv_precision, bool differentiate)
+                     bool use_full_conv_precision, bool differentiate,bool xla_only, std::string fxla)
     : use_full_conv_precision_(use_full_conv_precision),
       differentiate_(differentiate),
-      script_module_(module) {}
+      script_module_(module),
+      xla_only_(xla_only),
+      fxla_(fxla) {}
 
 void XlaModule::Initialize(const TensorBatchVector& inputs) {
   if (script_module_ == nullptr) {
@@ -273,6 +285,9 @@ void XlaModule::backward(const TensorBatchVector& grad_outputs) {
     backward_shape_ = GetResultShape(*backward_computation_, grad_outputs);
   }
 
+  if(xla_only_){
+     gen_xla( *backward_computation_, fxla_);
+  }
   TensorBatchVector grad_inputs =
       Execute(*backward_computation_, raw_grad_outputs_data, devices_,
               *backward_shape_);
@@ -340,6 +355,9 @@ XlaModule::TensorBatchVector XlaModule::RunFusedTrain(
     forward_shape_ = GetResultShape(*forward_computation_, inputs);
   }
 
+if(xla_only_){
+    gen_xla( *forward_computation_, fxla_);
+  }
   TensorBatchVector result_components =
       Execute(*forward_computation_, inputs_params_buffers_data, devices_,
               *forward_shape_);
@@ -489,6 +507,9 @@ XlaModule::TensorBatchVector XlaModule::RunUnfusedForward(
     forward_shape_ = GetResultShape(*forward_computation_, inputs);
   }
 
+if(xla_only_){
+     gen_xla(*forward_computation_, fxla_);
+  }
   TensorBatchVector raw_outputs =
       Execute(*forward_computation_, inputs_params_buffers_data, devices_,
               *forward_shape_);
@@ -556,12 +577,11 @@ XlaModule::TensorBatchVector XlaModule::Execute(
     const xla::XlaComputation& computation, const DataBatchVector& inputs,
     const std::vector<XLATensor::Device>& devices,
     const xla::Shape& result_shape) {
-
-      auto proto = computation.proto();
+      /*auto proto = computation.proto();
       std::ofstream myfile;
       myfile.open ("xla_output.pbtxt");
       myfile << proto.DebugString();
-      myfile.close();
+      myfile.close();*/
       std::cout<<"XlaModule::Execute begin\n";
   std::vector<std::string> device_strings(devices.size());
   for (size_t i = 0; i < devices.size(); ++i) {

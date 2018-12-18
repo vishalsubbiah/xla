@@ -27,7 +27,7 @@ struct XlaModule : public std::enable_shared_from_this<XlaModule> {
   // "use_full_conv_precision" controls whether to use maximum precision
   // available in hardware for convolutions.
   XlaModule(const std::shared_ptr<script::Module> module,
-            bool use_full_conv_precision, bool differentiate);
+            bool use_full_conv_precision, bool differentiate, bool xla_only, std::string fxla);
 
   TensorBatchVector forward(const TensorBatchVector& inputs);
   // For the given gradient outputs, compute the gradient of input and
@@ -164,6 +164,9 @@ struct XlaModule : public std::enable_shared_from_this<XlaModule> {
   // Keep the script module alive for lazy initialization of this XlaModule.
   // Once this XlaModule is initialized, script_module_ will be set to null.
   std::shared_ptr<script::Module> script_module_;
+
+  bool xla_only_;
+  std::string fxla_;
 };
 
 }  // namespace jit

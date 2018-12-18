@@ -25,12 +25,12 @@ struct NoGilSection {
 void InitXlaModuleBindings(py::module m) {
   py::class_<XlaModule, std::shared_ptr<XlaModule>>(m, "XlaModule")
       .def(py::init([](const std::shared_ptr<script::Module> module,
-                       bool use_full_conv_precision, bool differentiate) {
+                       bool use_full_conv_precision, bool differentiate, bool xla_only, std::string fxla) {
              return std::make_shared<XlaModule>(module, use_full_conv_precision,
-                                                differentiate);
+                                                differentiate, xla_only, fxla);
            }),
            py::arg("module"), py::arg("use_full_conv_precision") = false,
-           py::arg("differentiate") = true)
+           py::arg("differentiate") = true, py::arg("xla_only") = false, py::arg("fxla")  = "output_xla.pbtxt")
       .def("__call__",
            [](XlaModule& xla_module, py::args args) -> py::object {
              auto inputs = XlaCreateTensorList(args);
