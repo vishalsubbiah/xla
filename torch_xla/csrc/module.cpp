@@ -20,6 +20,8 @@
 #include "torch/csrc/jit/passes/lower_tuples.h"
 #include "torch/csrc/jit/passes/specialize_undef.h"
 
+#include <iostream>
+#include <fstream>
 namespace torch {
 namespace jit {
 namespace {
@@ -27,6 +29,7 @@ namespace {
 void GatherParameters(std::vector<at::Tensor*>* values,
                       std::vector<bool>* requires_grad,
                       const script::Module& m) {
+  std::cout<<"GatherParameters begin\n";
   for (auto& param : m.get_parameters()) {
     values->push_back(param->slot());
     requires_grad->push_back(!param->is_buffer);
@@ -34,11 +37,13 @@ void GatherParameters(std::vector<at::Tensor*>* values,
   for (const auto& sub : m.get_modules()) {
     GatherParameters(values, requires_grad, *sub->module);
   }
+std::cout<<"GatherParameters end\n";
 }
 
 XlaModule::TensorBatchVector CreateResultBatchVector(
     std::vector<std::vector<std::shared_ptr<xla::ComputationClient::Data>>>
         results) {
+  std::cout<<"CreateResultBatchVector begin\n";
   XlaModule::TensorBatchVector batch_tensors;
   for (auto& replica_result_components : results) {
     XlaModule::TensorBatchVector::value_type replica_tensors;
@@ -48,6 +53,7 @@ XlaModule::TensorBatchVector CreateResultBatchVector(
     }
     batch_tensors.push_back(std::move(replica_tensors));
   }
+   std::cout<<"CreateResultBatchVector end\n";
   return batch_tensors;
 }
 
@@ -63,7 +69,7 @@ void XlaModule::Initialize(const TensorBatchVector& inputs) {
   if (script_module_ == nullptr) {
     return;
   }
-
+  std::cout<<"XlaModule::Initialize begin\n";
   // Get forward graph.
   const auto forward = script_module_->find_method("forward");
   JIT_ASSERT(forward);
@@ -160,6 +166,7 @@ void XlaModule::Initialize(const TensorBatchVector& inputs) {
   TF_VLOG(4) << "Gradient DF:\n" << df_->toString();
   // Mark the module as initialized.
   script_module_ = nullptr;
+  std::cout<<"XlaModule::Initialize end\n";
 }
 
 void XlaModule::CheckInitialized() const {
@@ -171,15 +178,20 @@ void XlaModule::CheckInitialized() const {
 
 XlaModule::TensorBatchVector XlaModule::forward(
     const TensorBatchVector& inputs) {
+   std::cout<<"XlaModule::forward begin\n";
   Initialize(inputs);
   if (!backward_input_gradients_.empty()) {
     const auto return_node = df_->return_node();
     const auto node_inputs = return_node->inputs();
+    
     if (!node_inputs.empty()) {
+      std::cout<<"XlaModule::forward end\n";
       return RunFusedTrain(inputs);
     }
   }
+  std::cout<<"XlaModule::forward end\n";
   return RunUnfusedForward(inputs);
+
 }
 
 void XlaModule::SetInputGradientsForFusion(std::vector<at::Tensor> gradients) {
@@ -187,6 +199,7 @@ void XlaModule::SetInputGradientsForFusion(std::vector<at::Tensor> gradients) {
 }
 
 void XlaModule::backward(const TensorBatchVector& grad_outputs) {
+  std::cout<<"XlaModule::backward begin\n";
   JIT_ASSERTM(differentiate_,
               "Calling backward() on a module with differentiate not set");
   CheckInitialized();
@@ -270,6 +283,7 @@ void XlaModule::backward(const TensorBatchVector& grad_outputs) {
   inputs_.clear();
   captured_outputs_.clear();
   captured_inputs_outputs_.clear();
+  std::cout<<"XlaModule::backward end\n";
 }
 
 void XlaModule::ApplyGradients(const TensorBatchVector& grad_inputs,
@@ -277,6 +291,7 @@ void XlaModule::ApplyGradients(const TensorBatchVector& grad_inputs,
                                const TensorBatchVector& optimizable_params,
                                const std::vector<bool>& inputs_require_grad,
                                const Graph& df) {
+  std::cout<<"XlaModule::ApplyGradients begin\n";
   size_t inputs_require_grad_count =
       std::count(inputs_require_grad.begin(), inputs_require_grad.end(), true);
   for (size_t i = 0; i < inputs.size(); ++i) {
@@ -298,12 +313,13 @@ void XlaModule::ApplyGradients(const TensorBatchVector& grad_inputs,
       ++grad_index;
     }
   }
+std::cout<<"XlaModule::ApplyGradients end\n";
 }
 
 XlaModule::TensorBatchVector XlaModule::RunFusedTrain(
     const TensorBatchVector& inputs) {
   Initialize(inputs);
-
+  std::cout<<"XlaModule::RunFusedTrain begin\n";
   TensorBatchVector inputs_params_buffers = PrepareForwardInput(inputs);
   if (!forward_computation_) {
     // Shapes are going to be the same for all replicas, so use the ones of the
@@ -345,6 +361,7 @@ XlaModule::TensorBatchVector XlaModule::RunFusedTrain(
     forward_result.push_back(std::move(replica_forward_result));
     grad_inputs_.push_back(std::move(replica_grad_inputs));
   }
+  std::cout<<"XlaModule::RunFusedTrain end\n";
   return forward_result;
 }
 
@@ -365,6 +382,7 @@ xla::PrecisionConfig::Precision XlaModule::GetPrecisionConfig() const {
 
 void XlaModule::BuildFusedTrainComputation(
     const std::vector<XlaTranslator::ParameterShape>& forward_shapes) {
+  std::cout<<"XlaModule::BuildFusedTrainComputation begin\n";
   XlaTranslator xla_fwd_impl(f_, GetPrecisionConfig());
   xla::XlaBuilder b("XlaFusedComputation");
   // Build the forward pass program without compiling it, the backward pass
@@ -442,10 +460,12 @@ void XlaModule::BuildFusedTrainComputation(
   TF_VLOG(5) << "Fused computation:\n"
              << xla::xrt_util::GetComputationHloText(*forward_computation_)
                     .ValueOrDie();
+  std::cout<<"XlaModule::BuildFusedTrainComputation end\n";
 }
 
 XlaModule::TensorBatchVector XlaModule::RunUnfusedForward(
     const TensorBatchVector& inputs) {
+  std::cout<<"XlaModule::RunUnfusedForward begin\n";
   TensorBatchVector inputs_params_buffers = PrepareForwardInput(inputs);
 
   // Lazy-convert forward graph to XlaComputation.
@@ -500,11 +520,13 @@ XlaModule::TensorBatchVector XlaModule::RunUnfusedForward(
     captured_inputs_outputs_.push_back(
         std::move(replica_captured_inputs_outputs));
   }
+  std::cout<<"XlaModule::RunUnfusedForward end\n";
   return outputs;
 }
 
 XlaModule::TensorBatchVector XlaModule::PrepareForwardInput(
     const TensorBatchVector& inputs) {
+      std::cout<<"XlaModule::PrepareForwardInput begin\n";
   FlushTensorsOperations();
   // Clear the previous forward's captured vectors.
   // This is needed in case backward is not yet run, but two forward calls were
@@ -526,6 +548,7 @@ XlaModule::TensorBatchVector XlaModule::PrepareForwardInput(
     }
     inputs_params_buffers.push_back(std::move(replica_inputs_params_buffers));
   }
+   std::cout<<"XlaModule::PrepareForwardInput end\n";
   return inputs_params_buffers;
 }
 
@@ -533,6 +556,13 @@ XlaModule::TensorBatchVector XlaModule::Execute(
     const xla::XlaComputation& computation, const DataBatchVector& inputs,
     const std::vector<XLATensor::Device>& devices,
     const xla::Shape& result_shape) {
+
+      auto proto = computation.proto();
+      std::ofstream myfile;
+      myfile.open ("xla_output.pbtxt");
+      myfile << proto.DebugString();
+      myfile.close();
+      std::cout<<"XlaModule::Execute begin\n";
   std::vector<std::string> device_strings(devices.size());
   for (size_t i = 0; i < devices.size(); ++i) {
     device_strings[i] = devices[i].ToString();
@@ -550,6 +580,7 @@ XlaModule::TensorBatchVector XlaModule::Execute(
     exec_results = XlaGetClient()->ExecuteReplicated(computation, inputs,
                                                      device_strings, options);
   }
+  std::cout<<"XlaModule::Execute end\n";
   return CreateResultBatchVector(std::move(exec_results));
 }
 
