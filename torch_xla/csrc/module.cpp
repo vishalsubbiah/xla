@@ -20,6 +20,19 @@
 #include "torch/csrc/jit/passes/lower_tuples.h"
 #include "torch/csrc/jit/passes/specialize_undef.h"
 
+
+#include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
+#include "tensorflow/compiler/xla/service/call_inliner.h"
+#include "tensorflow/compiler/xla/service/hlo_subcomputation_unification.h"
+#include "tensorflow/compiler/xla/service/hlo_cse.h"
+#include "tensorflow/compiler/xla/service/algebraic_simplifier.h"
+#include "tensorflow/compiler/xla/service/while_loop_simplifier.h"
+#include "tensorflow/compiler/xla/service/reshape_mover.h"
+#include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
+#include "tensorflow/compiler/xla/service/layout_assignment.h"
+#include "tensorflow/compiler/xla/service/hlo_dce.h"
+#include "tensorflow/compiler/xla/service/flatten_call_graph.h"
+
 #include <iostream>
 #include <fstream>
 namespace torch {
@@ -29,9 +42,43 @@ namespace {
 void gen_xla(const xla::XlaComputation& computation,std::string fname){
   std::cout<<"gen_xla start\n";
   auto proto = computation.proto();
+  xla::HloModuleProto hmod;
+  hmod.CopyFrom(computation.proto());
+
+
+  // hlo optimizations
+
+  // getting hlo_module from proto
+  xla::StatusOr<xla::ProgramShape> program_shape_status = computation.GetProgramShape();
+  xla::ProgramShape program_shape = program_shape_status.ValueOrDie();
+  xla::HloModuleConfig module_config = xla::HloModuleConfig(program_shape);
+
+  xla::StatusOr<std::unique_ptr<xla::HloModule>> hlo_module_status = xla::HloModule::CreateFromProto(hmod, module_config);
+  std::unique_ptr<xla::HloModule> hlo_module = std::move(hlo_module_status.ValueOrDie());
+  std::cout<<hlo_module->name()<<"\n"; // can be removed in the future once build is stable
+  xla::HloPassPipeline pipeline("Interpreter");
+  pipeline.AddPass<xla::CallInliner>();
+  pipeline.AddPass<xla::HloSubcomputationUnification>();
+  pipeline.AddPass<xla::HloCSE>(false);
+
+  xla::AlgebraicSimplifierOptions options(
+         [](const xla::Shape&, const xla::Shape&) { return false; });
+  options.set_enable_dot_strength_reduction(false);
+  pipeline.AddPass<xla::AlgebraicSimplifier>(options);
+  pipeline.AddPass<xla::WhileLoopSimplifier>();
+  pipeline.AddPass<xla::ReshapeMover>();
+  pipeline.AddPass<xla::HloConstantFolding>();
+  pipeline.AddPass<xla::HloCSE>(true);
+  pipeline.AddPass<xla::LayoutAssignment>(
+    hlo_module.get()->mutable_entry_computation_layout(),
+    xla::LayoutAssignment::InstructionCanChangeLayout);
+  pipeline.AddPass<xla::HloDCE>();
+  pipeline.AddPass<xla::FlattenCallGraph>();
+  pipeline.Run(hlo_module.get());
+  //
   std::ofstream myfile;
   myfile.open (fname);
-  myfile << proto.DebugString();
+  myfile << hlo_module.get()->ToProto().DebugString();
   myfile.close();
   std::cout<<"xla generated\n";
   exit(0);
